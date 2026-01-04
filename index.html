@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sitton Soccer INC - PRO</title>
+    <title>Sitton Soccer INC - FINAL SUMMARY</title>
     <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;800&display=swap" rel="stylesheet">
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
@@ -381,6 +381,22 @@
                 const results = document.getElementById('lottery-results');
                 results.innerHTML = gameState.lotteryResults.map(r => `<div>${r}</div>`).join('');
                 
+                // הוספת סיכום תוצאות ברור בסוף ההגרלה
+                if (gameState.lotteryClickCount === 3) {
+                    let summaryHtml = '<div class="summary-box"><h3>📋 סדר הבחירה:</h3>';
+                    summaryHtml += `<div class="rank-row">🥇 בוחר ראשון: ${gameState.sortedCaptains[0]}</div>`;
+                    summaryHtml += `<div class="rank-row">🥈 בוחר שני: ${gameState.sortedCaptains[1]}</div>`;
+                    summaryHtml += `<div class="rank-row">🥉 בוחר שלישי: ${gameState.sortedCaptains[2]}</div>`;
+                    summaryHtml += '</div>';
+                    
+                    // מציג את הסיכום בתוך הדיב הייעודי
+                    const summaryContainer = document.getElementById('lottery-summary-container');
+                    if(summaryContainer) summaryContainer.innerHTML = summaryHtml;
+                } else {
+                    const summaryContainer = document.getElementById('lottery-summary-container');
+                    if(summaryContainer) summaryContainer.innerHTML = '';
+                }
+
                 const startBtn = document.getElementById('start-draft-btn');
                 startBtn.style.display = (gameState.lotteryClickCount === 3 && myRole === 'admin') ? "block" : "none";
                 
@@ -510,6 +526,17 @@
         .final-team-box h3 { margin: 0 0 10px 0; color: var(--sky-blue); }
         
         #user-role-display { position: absolute; top: 10px; right: 10px; font-size: 0.8rem; color: var(--sky-blue); opacity: 0.7; }
+
+        /* סגנון לסיכום ההגרלה */
+        .summary-box {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 15px;
+            margin-top: 15px;
+            border: 2px solid var(--sky-blue);
+        }
+        .summary-box h3 { margin: 0 0 10px 0; color: var(--sky-blue); }
+        .rank-row { font-size: 1.1rem; margin: 5px 0; text-align: right; padding-right: 10px; }
     </style>
 </head>
 <body>
@@ -542,6 +569,9 @@
             <div class="ball-spot"><div class="ball" id="kicking-ball" onclick="shoot()">⚽</div></div>
         </div>
         <div id="lottery-results" style="font-weight: 800; color: #f194ff; margin: 10px;"></div>
+        
+        <div id="lottery-summary-container"></div>
+
         <button id="start-draft-btn" class="primary" onclick="startDraft()" style="display:none;">לבחירה ⚽</button>
     </div>
     
