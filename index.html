@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sitton Soccer INC - PRO</title>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyC4iuxUEP6xNXrdlg2TNwdEZWFNFufUMno",
+            authDomain: "sittonsoccer.firebaseapp.com",
+            projectId: "sittonsoccer",
+            storageBucket: "sittonsoccer.firebasestorage.app",
+            messagingSenderId: "656446248098",
+            appId: "1:656446248098:web:090224f241df47ca3173fb",
+            databaseURL: "https://sittonsoccer-default-rtdb.europe-west1.firebasedatabase.app"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.database();
+        const gameRef = db.ref('current_game');
+
+        let myRole = null; 
+
+        const defaultState = { 
+            step: "setup", 
+            players: [], 
+            initialCaptains: [], 
+            sortedCaptains: ["", "", ""], 
+            teams: [[], [], []], 
+            teamColors: ["", "", ""], 
+            lotteryResults: [], 
+            lotteryPool: [0, 1, 2], 
+            currentPickStep: 0, 
+            lotteryClickCount: 0, 
+            pickHistory: [],
+            colorPickStep: 0 
+        };
+
+        let gameState = {...defaultState};
+        const draftOrder = [0,1,2, 0,1,2,2, 0,1, 0,1,2, 0,1,2, 0,1,2, 0,1,2];
+        const colorDraftOrder = [2, 1, 0]; 
+        let isProcessing = false;
+
+        const availableColorOptions = [
+            { name: 'לבן', emoji: '⚪' },
+            { name: 'כחול/שחור', emoji: '🔵⚫' },
+            { name: 'אדום', emoji: '🔴' }
+        ];
+
+        function setIdentity(role) {
+            myRole = role;
+            document.getElementById('identity-overlay').style.display = 'none';
+            
+            let roleName = "";
+            if (role === 'admin') roleName = "מנהל";
+            else {
+                const capName = (gameState.initialCaptains && gameState.initialCaptains[role]) ? gameState.initialCaptains[role] : ("קפטן " + (role + 1));
+                roleName = capName;
+            }
+            
+            document.getElementById('user-role-display').innerText = "שלום, " + roleName;
+            renderUI(); 
+        }
+
+        function checkTurn(actionType) {
+            if (myRole === 'admin') return true;
+
+            if (actionType === 'lottery') {
+                if (myRole === gameState.lotteryClickCount) return true;
+            }
+            
+            if (actionType === 'draft') {
+                const currentTurnCapIdx = draftOrder[gameState.currentPickStep];
+                if (myRole === currentTurnCapIdx) return true;
+            }
+
+            if (actionType === 'color') {
+                const currentTurnCapIdx = colorDraftOrder[gameState.colorPickStep];
+                if (myRole === currentTurnCapIdx) return true;
+            }
+
+            return false;
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        function normalizeState(state) {
+            const safeTeams = [0, 1, 2].map(i => {
+                if (state.teams && state.teams[i]) return state.teams[i];
+                return [];
+            });
+
+            return {
+                step: state.step || "setup",
+                players: Array.isArray(state.players) ? state.players : [],
+                initialCaptains: Array.isArray(state.initialCaptains) ? state.initialCaptains : [],
+                sortedCaptains: Array.isArray(state.sortedCaptains) ? state.sortedCaptains : ["", "", ""],
+                teams: safeTeams,
+                teamColors: Array.isArray(state.teamColors) ? state.teamColors : ["", "", ""],
+                lotteryResults: Array.isArray(state.lotteryResults) ? state.lotteryResults : [],
+                lotteryPool: Array.isArray(state.lotteryPool) ? state.lotteryPool : [0, 1, 2],
+                currentPickStep: state.currentPickStep || 0,
+                lotteryClickCount: state.lotteryClickCount || 0,
+                pickHistory: Array.isArray(state.pickHistory) ? state.pickHistory : [],
+                colorPickStep: state.colorPickStep || 0
+            };
+        }
+
+        gameRef.on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) { 
+                gameState = normalizeState(data);
+                renderUI(); 
+                updateLoginButtons(); 
+            }
+        });
+
+        function updateLoginButtons() {
+            if (gameState.initialCaptains && gameState.initialCaptains.length === 3) {
+                document.getElementById('btn-cap-0').innerText = "אני " + gameState.initialCaptains[0];
+                document.getElementById('btn-cap-1').innerText = "אני " + gameState.initialCaptains[1];
+                document.getElementById('btn-cap-2').innerText = "אני " + gameState.initialCaptains[2];
+                document.getElementById('waiting-msg').style.display = 'none';
+            } else {
+                document.getElementById('btn-cap-0').innerText = "קפטן 1 (ממתין לשם...)";
+                document.getElementById('btn-cap-1').innerText = "קפטן 2 (ממתין לשם...)";
+                document.getElementById('btn-cap-2').innerText = "קפטן 3 (ממתין לשם...)";
+                document.getElementById('waiting-msg').style.display = 'block';
+            }
+        }
+
+        async function updateFirebase(newState) {
+            try {
+                const normalizedState = normalizeState(newState);
+                await gameRef.set(normalizedState);
+                return true;
+            } catch (e) {
+                console.error("Firebase error:", e);
+                return false;
+            }
+        }
+
+        window.resetGame = () => { 
+            if(confirm("בטוח שאתה רוצה לאפס את המשחק?")) {
+                gameRef.set(null).then(() => location.reload()); 
+            }
+        };
+
+        window.goToLottery = async () => {
+            if (myRole !== 'admin') { alert("רק המנהל יכול להתחיל משחק!"); return; }
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            const rawPlayers = document.getElementById('player-input').value;
+            const rawCaps = document.getElementById('cap-input').value;
+            
+            if(!rawCaps.includes(',')) { 
+                alert("נא להפריד 3 קפטנים בפסיק"); 
+                isProcessing = false;
+                return; 
+            }
+            
+            const initialCaptains = rawCaps.split(',').map(s => s.trim());
+            let tempPlayers = rawPlayers.replace(/^\d+[:.]?/, '').split(/[,\n]/).map(s => s.trim()).filter(s => s.length > 0);
+            const players = tempPlayers.filter(p => !initialCaptains.includes(p));
+            const lotteryPool = shuffleArray([0, 1, 2]);
+            
+            await updateFirebase({
+                ...defaultState,
+                step: "lottery",
+                players: players,
+                initialCaptains: initialCaptains,
+                lotteryPool: lotteryPool
+            });
+            
+            isProcessing = false;
+        };
+
+        window.shoot = async () => {
+            if (!checkTurn('lottery')) { 
+                alert("זה לא התור שלך! חכה שהקפטן הנכון יבעט."); 
+                return; 
+            }
+
+            if (isProcessing) return;
+            if (gameState.lotteryClickCount >= 3) return;
+            
+            isProcessing = true;
+            
+            const clickIndex = gameState.lotteryClickCount;
+            const pos = gameState.lotteryPool[clickIndex];
+            const capName = gameState.initialCaptains[clickIndex];
+            
+            const ball = document.getElementById('kicking-ball');
+            if (ball) {
+                const animClass = pos === 0 ? 'kick-top-corner' : pos === 1 ? 'kick-center' : 'kick-miss';
+                ball.classList.remove('kick-top-corner', 'kick-center', 'kick-miss');
+                void ball.offsetWidth;
+                ball.classList.add(animClass);
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 1100));
+            
+            const newSortedCaptains = [...gameState.sortedCaptains];
+            newSortedCaptains[pos] = capName;
+            
+            let resText = (pos === 0) ? "⚽ לחיבורים!!!" : (pos === 1) ? "🥅 פנימה!" : "❌ החוצה!";
+            const newResults = [...gameState.lotteryResults, `${capName}: ${resText}`];
+            
+            await updateFirebase({
+                ...gameState,
+                sortedCaptains: newSortedCaptains,
+                lotteryResults: newResults,
+                lotteryClickCount: clickIndex + 1
+            });
+            
+            isProcessing = false;
+        };
+
+        window.startDraft = async () => { 
+            if (myRole !== 'admin') return; 
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            await updateFirebase({
+                ...gameState,
+                step: "draft",
+                teamColors: ["", "", ""],
+                colorPickStep: 0
+            });
+            
+            isProcessing = false;
+        };
+
+        window.pickPlayer = async (p) => {
+            if (!checkTurn('draft')) {
+                alert("היי! זה לא התור שלך לבחור שחקן.");
+                return;
+            }
+
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            const capIdx = draftOrder[gameState.currentPickStep];
+            let newTeams = gameState.teams.map((team, idx) => 
+                idx === capIdx ? [...team, p] : [...team]
+            );
+            
+            let newPlayers = gameState.players.filter(pl => pl !== p);
+            let newPickStep = gameState.currentPickStep + 1;
+            
+            const newHistory = [...gameState.pickHistory, {
+                player: p,
+                teamIdx: capIdx,
+                pickStep: gameState.currentPickStep
+            }];
+            
+            let nextStep = "draft";
+
+            if (newPlayers.length === 1) {
+                const lastPlayer = newPlayers[0];
+                const lastPlayerCapIdx = draftOrder[newPickStep];
+                
+                newTeams = newTeams.map((team, idx) => 
+                    idx === lastPlayerCapIdx ? [...team, lastPlayer] : [...team]
+                );
+                
+                newPlayers = [];
+                nextStep = "colors";
+            }
+
+            await updateFirebase({
+                ...gameState,
+                teams: newTeams,
+                players: newPlayers,
+                currentPickStep: newPickStep,
+                pickHistory: newHistory,
+                step: nextStep
+            });
+            
+            isProcessing = false;
+        };
+
+        window.undoLastPick = async () => {
+            if (myRole !== 'admin') { alert("רק המנהל יכול לבטל בחירה!"); return; }
+            if (isProcessing) return;
+            if (gameState.pickHistory.length === 0) return;
+            if (!confirm("לבטל את הבחירה האחרונה?")) return;
+            
+            isProcessing = true;
+            const lastPick = gameState.pickHistory[gameState.pickHistory.length - 1];
+            
+            const newTeams = gameState.teams.map((team, idx) => 
+                idx === lastPick.teamIdx ? team.filter(p => p !== lastPick.player) : [...team]
+            );
+            
+            const newPlayers = [...gameState.players, lastPick.player];
+            const newHistory = gameState.pickHistory.slice(0, -1);
+            
+            await updateFirebase({
+                ...gameState,
+                teams: newTeams,
+                players: newPlayers,
+                currentPickStep: lastPick.pickStep,
+                pickHistory: newHistory,
+                step: "draft"
+            });
+            
+            isProcessing = false;
+        };
+
+        window.pickColor = async (teamIdx, color, emoji) => {
+            if (!checkTurn('color')) {
+                alert("חכה לתור שלך לבחור צבע!");
+                return;
+            }
+
+            if (isProcessing) return;
+            isProcessing = true;
+
+            const newTeamColors = [...gameState.teamColors];
+            newTeamColors[teamIdx] = emoji + " " + color;
+            
+            const nextColorStep = gameState.colorPickStep + 1;
+            
+            await updateFirebase({
+                ...gameState,
+                teamColors: newTeamColors,
+                colorPickStep: nextColorStep
+            });
+            
+            isProcessing = false;
+        };
+
+        window.finishColors = () => {
+            if (myRole !== 'admin') return;
+            updateFirebase({ ...gameState, step: "final" });
+        }
+
+        window.copyFinal = () => {
+            let text = "*🏆 SITTON SOCCER - כוחות 🏆*\n\n";
+            for(let i = 0; i < 3; i++) {
+                const color = gameState.teamColors[i] || "⚪";
+                const capName = gameState.sortedCaptains[i] || "חסר שם";
+                const players = gameState.teams[i] || [];
+                
+                text += `${color} ${capName}: `;
+                text += players.length > 0 ? players.join(", ") : "(אין שחקנים)";
+                text += "\n\n";
+            }
+            navigator.clipboard.writeText(text).then(() => { alert("הועתק!"); });
+        };
+
+        function renderUI() {
+            document.getElementById('admin-reset-btn').style.display = (myRole === 'admin') ? 'block' : 'none';
+
+            if (!gameState.step) return;
+            
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            const section = document.getElementById(gameState.step);
+            if (section) section.classList.add('active');
+
+            if (gameState.step === "lottery") {
+                const instruction = document.getElementById('lottery-instruction');
+                instruction.innerText = gameState.lotteryClickCount < 3 
+                    ? `${gameState.initialCaptains[gameState.lotteryClickCount] || ''}, תבעט!` 
+                    : "הגרלה הסתיימה";
+                
+                const results = document.getElementById('lottery-results');
+                results.innerHTML = gameState.lotteryResults.map(r => `<div>${r}</div>`).join('');
+                
+                const startBtn = document.getElementById('start-draft-btn');
+                startBtn.style.display = (gameState.lotteryClickCount === 3 && myRole === 'admin') ? "block" : "none";
+                
+                const ball = document.getElementById('kicking-ball');
+                if (gameState.lotteryClickCount < 3) ball.className = 'ball';
+            }
+            
+            if (gameState.step === "draft") {
+                const currentCap = gameState.sortedCaptains[draftOrder[gameState.currentPickStep]] || "";
+                
+                const isMyTurn = checkTurn('draft');
+                const turnDisplay = document.getElementById('turn-display');
+                turnDisplay.innerText = "תור: " + currentCap;
+                
+                if (isMyTurn) {
+                    turnDisplay.style.background = "#27ae60"; 
+                    turnDisplay.innerHTML += " (תורך!)";
+                } else {
+                    turnDisplay.style.background = "#e74c3c";
+                }
+
+                document.getElementById('available-players').innerHTML = gameState.players.map(p => 
+                    `<div class="player-card ${!isMyTurn ? 'disabled' : ''}" onclick="pickPlayer('${p}')">${p}</div>`
+                ).join('');
+                
+                document.getElementById('undo-btn').style.display = (gameState.pickHistory.length > 0 && myRole === 'admin') ? "inline-block" : "none";
+                
+                for(let i = 0; i < 3; i++) {
+                    document.getElementById(`cap-${i}-name`).innerText = gameState.sortedCaptains[i] || "";
+                    const teamList = document.getElementById(`team-${i}-list`);
+                    teamList.innerHTML = (gameState.teams[i] || []).map((p, idx) => 
+                        `<div class="team-player">${idx + 1}. ${p}</div>`
+                    ).join('');
+                }
+            }
+
+            if (gameState.step === "colors") {
+                const currentPickerIdx = colorDraftOrder[gameState.colorPickStep];
+                const isFinished = gameState.colorPickStep >= 3;
+
+                for(let i = 0; i < 3; i++) {
+                    document.getElementById(`color-cap-${i}-name`).innerText = gameState.sortedCaptains[i];
+                    
+                    const pickerDiv = document.getElementById(`color-select-${i}`);
+                    const currentColor = gameState.teamColors[i];
+                    
+                    if (currentColor && currentColor !== "") {
+                        pickerDiv.innerHTML = `<div class="selected-color">${currentColor}</div>`;
+                    } else if (i === currentPickerIdx && !isFinished) {
+                        if (myRole === currentPickerIdx || myRole === 'admin') {
+                            let buttonsHtml = '<div class="color-buttons">';
+                            availableColorOptions.forEach(opt => {
+                                const isTaken = gameState.teamColors.some(taken => taken.includes(opt.name));
+                                if (!isTaken) {
+                                    buttonsHtml += `<button class="color-btn" onclick="pickColor(${i}, '${opt.name}', '${opt.emoji}')">${opt.emoji}</button>`;
+                                }
+                            });
+                            buttonsHtml += '</div>';
+                            pickerDiv.innerHTML = buttonsHtml;
+                        } else {
+                            pickerDiv.innerHTML = `<div style="color:yellow">הוא בוחר עכשיו...</div>`;
+                        }
+                    } else {
+                        pickerDiv.innerHTML = `<div style="opacity:0.5;">ממתין לתורו...</div>`;
+                    }
+                }
+                document.getElementById('finish-colors-btn').style.display = (isFinished && myRole === 'admin') ? "block" : "none";
+            }
+            
+            if (gameState.step === "final") {
+                for(let i = 0; i < 3; i++) {
+                    document.getElementById(`final-cap-${i}-name`).innerText = gameState.sortedCaptains[i] || "";
+                    document.getElementById(`final-team-${i}-color`).innerText = gameState.teamColors[i] || "";
+                    document.getElementById(`final-team-${i}-list`).innerHTML = (gameState.teams[i] || []).map((p, idx) => `<div>${idx + 1}. ${p}</div>`).join('');
+                }
+            }
+        }
+    </script>
+    <style>
+        :root { --sky-blue: #aed6f1; --pitch-green: #27ae60; --dark-bg: #1e272e; --card-bg: #2f3542; --input-bg: #3e4451; --text-white: #ffffff; }
+        * { font-family: 'Assistant', sans-serif; box-sizing: border-box; }
+        body { background-color: var(--dark-bg); color: var(--text-white); text-align: center; margin: 0; padding: 15px; }
+        .container { max-width: 600px; margin: auto; background: var(--card-bg); padding: 25px; border-radius: 25px; border: 4px solid var(--sky-blue); position: relative; min-height: 80vh; }
+        
+        .section { display: none; }
+        .active { display: block; animation: fadeIn 0.5s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        #identity-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .identity-btn { background: var(--sky-blue); color: var(--dark-bg); border: none; padding: 20px; margin: 10px; width: 80%; max-width: 300px; border-radius: 15px; font-size: 1.5rem; font-weight: 800; cursor: pointer; transition: 0.3s; }
+        .identity-btn:hover { transform: scale(1.05); background: white; }
+        .admin-btn { background: #e74c3c; color: white; margin-bottom: 30px; }
+        #waiting-msg { color: #ccc; font-size: 0.9rem; margin-top: 20px; display: none; }
+        
+        textarea, input[type="text"] { width: 100%; background: var(--input-bg); color: white; border: 2px solid var(--sky-blue); border-radius: 15px; padding: 15px; margin: 10px 0; font-size: 1rem; }
+        
+        .pitch { background: var(--pitch-green); height: 220px; border-radius: 20px; position: relative; margin: 15px 0; border: 3px solid white; overflow: hidden; }
+        .goal { width: 130px; height: 65px; border: 4px solid white; border-bottom: none; margin: 35px auto 0; background: rgba(255,255,255,0.1); }
+        .ball-spot { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); width: 40px; height: 40px; }
+        .ball { font-size: 2.5rem; cursor: pointer; transition: 1s cubic-bezier(0.175, 0.885, 0.32, 1.275); position: absolute; left: 0; bottom: 0; }
+        
+        .kick-top-corner { transform: translate(-48px, -128px) scale(0.3) rotate(720deg); }
+        .kick-center { transform: translate(0, -125px) scale(0.3) rotate(720deg); }
+        .kick-miss { transform: translate(140px, -90px) scale(0.3) rotate(720deg); opacity: 0; }
+        
+        .player-card { background: var(--sky-blue); color: var(--dark-bg); padding: 8px 15px; margin: 5px; border-radius: 10px; cursor: pointer; display: inline-block; font-weight: 800; transition: transform 0.2s; }
+        .player-card:hover { transform: scale(1.05); }
+        .player-card.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; background: #95a5a6; }
+        
+        button.primary { background: var(--sky-blue); color: var(--dark-bg); border: none; padding: 15px; border-radius: 30px; cursor: pointer; font-weight: 800; width: 100%; font-size: 1.1rem; margin-top: 10px; }
+        
+        .teams-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 20px; }
+        .team-box { background: rgba(255,255,255,0.05); padding: 10px; border-radius: 15px; border: 2px solid var(--sky-blue); min-height: 150px; }
+        .team-box h3 { color: var(--sky-blue); margin: 0 0 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; }
+        
+        .team-player { font-size: 0.85rem; text-align: right; padding-right: 5px; }
+        
+        .color-row { display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.05); padding: 15px; margin: 10px 0; border-radius: 10px; }
+        .color-buttons { display: flex; gap: 5px; }
+        .color-btn { background: var(--input-bg); border: 1px solid white; color: white; padding: 5px 10px; border-radius: 8px; cursor: pointer; }
+        .selected-color { font-size: 1.2rem; font-weight: bold; }
+        
+        .reset-btn { position: absolute; top: 10px; left: 10px; background: none; border: 1px solid #ff4757; color: #ff4757; cursor: pointer; padding: 5px; border-radius: 5px; font-size: 0.8rem; }
+        #undo-btn { background: #ff6b6b; color: white; border: none; padding: 8px 15px; border-radius: 20px; cursor: pointer; margin-bottom: 10px; font-size: 0.9rem; }
+        
+        .final-team-box { background: rgba(255,255,255,0.08); padding: 15px; border-radius: 15px; border: 2px solid var(--sky-blue); margin: 10px 0; text-align: center; }
+        .final-team-box h3 { margin: 0 0 10px 0; color: var(--sky-blue); }
+        
+        #user-role-display { position: absolute; top: 10px; right: 10px; font-size: 0.8rem; color: var(--sky-blue); opacity: 0.7; }
+    </style>
+</head>
+<body>
+
+<div id="identity-overlay">
+    <h2 style="color: white; margin-bottom: 20px;">⚽ מי אתה?</h2>
+    <button class="identity-btn admin-btn" onclick="setIdentity('admin')">👑 מנהל המשחק</button>
+    <button id="btn-cap-0" class="identity-btn" onclick="setIdentity(0)">קפטן 1</button>
+    <button id="btn-cap-1" class="identity-btn" onclick="setIdentity(1)">קפטן 2</button>
+    <button id="btn-cap-2" class="identity-btn" onclick="setIdentity(2)">קפטן 3</button>
+    <div id="waiting-msg">ממתין שהמנהל יזין שמות... <span style="font-size:1.5rem">⏳</span></div>
+</div>
+
+<div class="container">
+    <button id="admin-reset-btn" class="reset-btn" onclick="resetGame()" style="display:none;">אפס 🔄</button>
+    <div id="user-role-display"></div>
+    <h1>SITTON SOCCER INC</h1>
+    
+    <div id="setup" class="section active">
+        <p style="color: yellow; font-size: 0.9rem;">רק המנהל רואה את המסך הזה</p>
+        <textarea id="player-input" placeholder="רשימת שחקנים..."></textarea>
+        <input type="text" id="cap-input" placeholder="3 קפטנים (מופרדים בפסיק)">
+        <button class="primary" onclick="goToLottery()">לפנדלים 🎯</button>
+    </div>
+    
+    <div id="lottery" class="section">
+        <h2 id="lottery-instruction"></h2>
+        <div class="pitch">
+            <div class="goal"></div>
+            <div class="ball-spot"><div class="ball" id="kicking-ball" onclick="shoot()">⚽</div></div>
+        </div>
+        <div id="lottery-results" style="font-weight: 800; color: #f194ff; margin: 10px;"></div>
+        <button id="start-draft-btn" class="primary" onclick="startDraft()" style="display:none;">לבחירה ⚽</button>
+    </div>
+    
+    <div id="draft" class="section">
+        <div id="turn-display" style="padding: 10px; border-radius: 10px; font-weight: bold; font-size: 1.2rem; margin-bottom: 15px;"></div>
+        <div id="available-players"></div>
+        <button id="undo-btn" onclick="undoLastPick()" style="display:none;">↩️ טעות? בטל בחירה</button>
+        <div class="teams-grid">
+            <div class="team-box"><h3 id="cap-0-name"></h3><div id="team-0-list"></div></div>
+            <div class="team-box"><h3 id="cap-1-name"></h3><div id="team-1-list"></div></div>
+            <div class="team-box"><h3 id="cap-2-name"></h3><div id="team-2-list"></div></div>
+        </div>
+    </div>
+
+    <div id="colors" class="section">
+        <h2>🎨 בחירת צבעים</h2>
+        <h4 style="color:var(--sky-blue); margin-bottom: 10px;">(מתחילים ממי שבחר אחרון)</h4>
+        <div class="color-row">
+            <h3 id="color-cap-0-name"></h3>
+            <div id="color-select-0"></div>
+        </div>
+        <div class="color-row">
+            <h3 id="color-cap-1-name"></h3>
+            <div id="color-select-1"></div>
+        </div>
+        <div class="color-row">
+            <h3 id="color-cap-2-name"></h3>
+            <div id="color-select-2"></div>
+        </div>
+        <button id="finish-colors-btn" class="primary" onclick="finishColors()" style="display:none;">סיום וסיכום ✅</button>
+    </div>
+    
+    <div id="final" class="section">
+        <h2>🏆 הכוחות מוכנים!</h2>
+        <div class="final-team-box">
+            <h3><span id="final-team-0-color"></span> <span id="final-cap-0-name"></span></h3>
+            <div id="final-team-0-list"></div>
+        </div>
+        <div class="final-team-box">
+            <h3><span id="final-team-1-color"></span> <span id="final-cap-1-name"></span></h3>
+            <div id="final-team-1-list"></div>
+        </div>
+        <div class="final-team-box">
+            <h3><span id="final-team-2-color"></span> <span id="final-cap-2-name"></span></h3>
+            <div id="final-team-2-list"></div>
+        </div>
+        <button class="primary" onclick="copyFinal()">העתק לוואטסאפ 📋</button>
+    </div>
+</div>
+</body>
+</html>
