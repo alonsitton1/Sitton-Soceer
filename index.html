@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sitton Soccer INC - FINAL SUMMARY</title>
+    <title>Sitton Soccer INC - FIXED KICKS</title>
     <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;800&display=swap" rel="stylesheet">
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
@@ -205,6 +205,10 @@
             
             const ball = document.getElementById('kicking-ball');
             if (ball) {
+                // איפוס אנימציה למקרה שצריך
+                ball.style.animation = 'none';
+                ball.offsetHeight; /* trigger reflow */
+                
                 const animClass = pos === 0 ? 'kick-top-corner' : pos === 1 ? 'kick-center' : 'kick-miss';
                 ball.classList.remove('kick-top-corner', 'kick-center', 'kick-miss');
                 void ball.offsetWidth;
@@ -381,7 +385,6 @@
                 const results = document.getElementById('lottery-results');
                 results.innerHTML = gameState.lotteryResults.map(r => `<div>${r}</div>`).join('');
                 
-                // הוספת סיכום תוצאות ברור בסוף ההגרלה
                 if (gameState.lotteryClickCount === 3) {
                     let summaryHtml = '<div class="summary-box"><h3>📋 סדר הבחירה:</h3>';
                     summaryHtml += `<div class="rank-row">🥇 בוחר ראשון: ${gameState.sortedCaptains[0]}</div>`;
@@ -389,7 +392,6 @@
                     summaryHtml += `<div class="rank-row">🥉 בוחר שלישי: ${gameState.sortedCaptains[2]}</div>`;
                     summaryHtml += '</div>';
                     
-                    // מציג את הסיכום בתוך הדיב הייעודי
                     const summaryContainer = document.getElementById('lottery-summary-container');
                     if(summaryContainer) summaryContainer.innerHTML = summaryHtml;
                 } else {
@@ -498,9 +500,10 @@
         .ball-spot { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); width: 40px; height: 40px; }
         .ball { font-size: 2.5rem; cursor: pointer; transition: 1s cubic-bezier(0.175, 0.885, 0.32, 1.275); position: absolute; left: 0; bottom: 0; }
         
-        .kick-top-corner { transform: translate(-48px, -128px) scale(0.3) rotate(720deg); }
-        .kick-center { transform: translate(0, -125px) scale(0.3) rotate(720deg); }
-        .kick-miss { transform: translate(140px, -90px) scale(0.3) rotate(720deg); opacity: 0; }
+        /* תיקון קואורדינטות הבעיטה: יותר "בתוך" השער ופחות באוויר */
+        .kick-top-corner { transform: translate(-35px, -110px) scale(0.3) rotate(720deg); }
+        .kick-center { transform: translate(0, -100px) scale(0.3) rotate(720deg); }
+        .kick-miss { transform: translate(120px, -80px) scale(0.3) rotate(720deg); opacity: 0; }
         
         .player-card { background: var(--sky-blue); color: var(--dark-bg); padding: 8px 15px; margin: 5px; border-radius: 10px; cursor: pointer; display: inline-block; font-weight: 800; transition: transform 0.2s; }
         .player-card:hover { transform: scale(1.05); }
@@ -527,7 +530,6 @@
         
         #user-role-display { position: absolute; top: 10px; right: 10px; font-size: 0.8rem; color: var(--sky-blue); opacity: 0.7; }
 
-        /* סגנון לסיכום ההגרלה */
         .summary-box {
             background: rgba(255,255,255,0.1);
             border-radius: 15px;
